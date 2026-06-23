@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "teleoperation"
+version = "0.1.0"
+description = "Vision Pro teleoperation core with optional ROS2 and robot backends"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+avp = [
+  "aiohttp>=3.9",
+  "aiohttp_cors>=0.7",
+  "aiortc>=1.8",
+  "av>=11",
+  "vuer==0.0.32rc7",
+]
+image = [
+  "opencv-python>=4.9",
+]
+all = [
+  "aiohttp>=3.9",
+  "aiohttp_cors>=0.7",
+  "aiortc>=1.8",
+  "av>=11",
+  "vuer==0.0.32rc7",
+  "opencv-python>=4.9",
+]
+
+[project.scripts]
+teleop-publish-avp-pose = "teleoperation.cli.publish_avp_pose:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["teleoperation*"]
