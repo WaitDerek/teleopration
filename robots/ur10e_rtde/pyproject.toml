@@ -12,6 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
+teleop-check-ur10e-state = "teleop_ur10e_rtde.preflight:main"
 teleop-ur10e-rtde = "teleop_ur10e_rtde.ros2_node:main"
 
 [tool.setuptools.packages.find]
