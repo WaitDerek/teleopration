@@ -48,3 +48,8 @@ def quat_wxyz_to_rotvec(quat: np.ndarray) -> np.ndarray:
         return np.zeros(3)
     angle = 2.0 * np.arctan2(vector_norm, q[0])
     return q[1:] / vector_norm * angle
+
+
+def quat_angle_rad_wxyz(quat: np.ndarray) -> float:
+    q = normalize_quat_wxyz(quat)
+    return float(2.0 * np.arccos(np.clip(abs(q[0]), -1.0, 1.0)))
