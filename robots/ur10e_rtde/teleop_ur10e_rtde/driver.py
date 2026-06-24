@@ -85,6 +85,10 @@ class Robotiq2F85SocketGripper:
         force_device = self._to_device_units(force)
         self._set_vars({"POS": position_device, "SPE": speed_device, "FOR": force_device, "GTO": 1})
 
+    def status(self) -> dict[str, int]:
+        names = ("ACT", "STA", "GTO", "POS", "PRE", "OBJ", "FLT")
+        return {name: self._get_var(name) for name in names}
+
     def _to_device_units(self, value: float) -> int:
         if not np.isfinite(value):
             raise ValueError("gripper command values must be finite")
