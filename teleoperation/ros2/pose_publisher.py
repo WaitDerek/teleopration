@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from teleoperation.types import Pose
+from typing import Optional
+
+from teleoperation.types import GripperCommand, Pose
 
 
 def _require_ros2():
@@ -13,14 +15,30 @@ def _require_ros2():
     return rclpy, PoseStamped, Header
 
 
-def make_pose_publisher_node(topic_name: str = "Target_Pose", frame_id: str = "base_link"):
+def _require_float32():
+    try:
+        from std_msgs.msg import Float32
+    except ImportError as exc:
+        raise RuntimeError("ROS2 std_msgs Python packages are required. Source your ROS2 workspace first.") from exc
+    return Float32
+
+
+def make_pose_publisher_node(
+    topic_name: str = "Target_Pose",
+    frame_id: str = "base_link",
+    gripper_topic_name: Optional[str] = None,
+):
     rclpy, PoseStamped, Header = _require_ros2()
+    Float32 = _require_float32() if gripper_topic_name else None
     from rclpy.node import Node
 
     class TargetPosePublisher(Node):
         def __init__(self) -> None:
             super().__init__("teleoperation_target_pose_publisher")
             self.publisher_ = self.create_publisher(PoseStamped, topic_name, 10)
+            self.gripper_publisher_ = (
+                self.create_publisher(Float32, gripper_topic_name, 10) if Float32 is not None else None
+            )
 
         def publish_target(self, pose: Pose) -> None:
             msg = PoseStamped()
@@ -35,5 +53,12 @@ def make_pose_publisher_node(topic_name: str = "Target_Pose", frame_id: str = "b
             msg.pose.orientation.y = float(pose.orientation_wxyz[2])
             msg.pose.orientation.z = float(pose.orientation_wxyz[3])
             self.publisher_.publish(msg)
+
+        def publish_gripper(self, command: GripperCommand) -> None:
+            if self.gripper_publisher_ is None or Float32 is None:
+                return
+            msg = Float32()
+            msg.data = float(command.position)
+            self.gripper_publisher_.publish(msg)
 
     return TargetPosePublisher

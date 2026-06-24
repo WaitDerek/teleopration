@@ -4,6 +4,8 @@ import argparse
 import time
 
 from teleoperation.avp import OpenTeleVision
+from teleoperation.cli.network import guess_lan_ip
+from teleoperation.cli.url_display import show_open_url
 from teleoperation.ros2.pose_publisher import _require_ros2, make_pose_publisher_node
 from teleoperation.session import TeleopSession
 from teleoperation.types import StreamState
@@ -13,32 +15,118 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Publish AVP right-hand teleoperation target poses to ROS2.")
     parser.add_argument("--topic", default="Target_Pose", help="ROS2 PoseStamped topic to publish.")
     parser.add_argument("--frame-id", default="base_link", help="PoseStamped frame_id.")
+    parser.add_argument(
+        "--gripper-topic",
+        default="Gripper_Command",
+        help="ROS2 std_msgs/Float32 topic for normalized gripper closure, 0.0 open and 1.0 closed.",
+    )
+    parser.add_argument("--no-gripper", action="store_true", help="Do not publish AVP pinch gripper commands.")
+    parser.add_argument("--gripper-open", type=float, default=0.0, help="Published gripper value when not pinching.")
+    parser.add_argument("--gripper-closed", type=float, default=1.0, help="Published gripper value when pinching.")
+    parser.add_argument("--gripper-effort", type=float, default=0.5, help="Normalized effort stored in GripperCommand.")
     parser.add_argument("--cert", default="./cert.pem", help="TLS certificate for Vuer.")
     parser.add_argument("--key", default="./key.pem", help="TLS key for Vuer.")
     parser.add_argument("--ngrok", action="store_true", help="Run Vuer without local TLS cert/key.")
+    parser.add_argument("--public-host", default=None, help="LAN IP or hostname opened from Vision Pro.")
+    parser.add_argument("--port", type=int, default=8012, help="Vuer HTTPS/websocket port.")
+    parser.add_argument(
+        "--client-url",
+        default=None,
+        help="Vuer web client URL. Use https://vuer.ai to load the official client while connecting to local WSS.",
+    )
+    parser.add_argument("--debug-avp", action="store_true", help="Print Vuer HTTP/websocket and AVP event diagnostics.")
+    parser.add_argument("--show-hands", action="store_true", help="Show Vuer hand overlays on Vision Pro.")
+    parser.add_argument(
+        "--hide-images",
+        action="store_true",
+        help="Disable shared-memory stereo image heartbeat. This can make HAND_MOVE less reliable in some Vuer clients.",
+    )
+    parser.add_argument(
+        "--image-opacity",
+        type=float,
+        default=0.05,
+        help="Opacity for the image heartbeat/background. Low values reduce the dark overlay.",
+    )
     parser.add_argument("--rate", type=float, default=50.0, help="Publish loop rate in Hz.")
     parser.add_argument("--stale-after", type=float, default=0.5, help="Stop publishing after this many seconds without AVP events.")
+    parser.add_argument(
+        "--calibration-delay-samples",
+        type=int,
+        default=0,
+        help="Ignore this many valid right-hand samples before setting the zero pose.",
+    )
+    parser.add_argument(
+        "--position-scale",
+        type=float,
+        default=1.0,
+        help="Scale AVP translation deltas before publishing.",
+    )
+    parser.add_argument(
+        "--max-position-norm",
+        type=float,
+        default=None,
+        help="Drop pose deltas whose scaled translation norm exceeds this many meters.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.rate <= 0:
+        raise ValueError("--rate must be positive")
+    if args.calibration_delay_samples < 0:
+        raise ValueError("--calibration-delay-samples must be non-negative")
+    if args.position_scale <= 0:
+        raise ValueError("--position-scale must be positive")
+    if args.max_position_norm is not None and args.max_position_norm <= 0:
+        raise ValueError("--max-position-norm must be positive")
+
     rclpy, _, _ = _require_ros2()
     rclpy.init()
-    node_cls = make_pose_publisher_node(topic_name=args.topic, frame_id=args.frame_id)
+    gripper_topic = None if args.no_gripper else args.gripper_topic
+    node_cls = make_pose_publisher_node(topic_name=args.topic, frame_id=args.frame_id, gripper_topic_name=gripper_topic)
     node = node_cls()
-    source = OpenTeleVision(cert_file=args.cert, key_file=args.key, ngrok=args.ngrok)
-    session = TeleopSession(stale_after_sec=args.stale_after)
+    public_host = None if args.ngrok else (args.public_host or guess_lan_ip())
+    source = OpenTeleVision(
+        cert_file=args.cert,
+        key_file=args.key,
+        ngrok=args.ngrok,
+        public_host=public_host,
+        port=args.port,
+        debug=args.debug_avp,
+        show_hands=args.show_hands,
+        show_images=not args.hide_images,
+        image_opacity=args.image_opacity,
+        client_url=args.client_url,
+    )
+    session = TeleopSession(
+        stale_after_sec=args.stale_after,
+        gripper_open_position=args.gripper_open,
+        gripper_closed_position=args.gripper_closed,
+        gripper_effort=args.gripper_effort,
+        position_scale=args.position_scale,
+        max_position_norm=args.max_position_norm,
+        calibration_delay_samples=args.calibration_delay_samples,
+    )
     period = 1.0 / args.rate
 
     source.start()
-    node.get_logger().info(f"Publishing AVP teleoperation target poses on {args.topic}")
+    show_open_url(source.stable_browser_url(), label="Vision Pro URL")
+    if gripper_topic is None:
+        node.get_logger().info(f"Publishing AVP teleoperation target poses on {args.topic}")
+    else:
+        node.get_logger().info(
+            f"Publishing AVP target poses on {args.topic} and gripper closure on {gripper_topic}"
+        )
     try:
         while rclpy.ok():
             pose = session.target_from_source(source)
             state = source.state(args.stale_after)
             if pose is not None and state == StreamState.STREAMING:
                 node.publish_target(pose)
+                gripper_command = session.gripper_from_source(source)
+                if gripper_command is not None:
+                    node.publish_gripper(gripper_command)
             rclpy.spin_once(node, timeout_sec=0.0)
             time.sleep(period)
     except KeyboardInterrupt:

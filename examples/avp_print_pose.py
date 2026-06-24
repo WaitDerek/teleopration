@@ -21,7 +21,13 @@ def main() -> None:
         while True:
             pose = session.target_from_source(source)
             if pose is not None:
-                print(f"position={pose.position} orientation_wxyz={pose.orientation_wxyz}")
+                gripper = session.gripper_from_source(source)
+                gripper_position = None if gripper is None else gripper.position
+                print(
+                    f"position={pose.position} "
+                    f"orientation_wxyz={pose.orientation_wxyz} "
+                    f"gripper={gripper_position}"
+                )
             time.sleep(1.0 / args.rate)
     except KeyboardInterrupt:
         pass

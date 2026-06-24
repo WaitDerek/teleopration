@@ -17,6 +17,7 @@ avp = [
   "aiohttp_cors>=0.7",
   "aiortc>=1.8",
   "av>=11",
+  "params-proto>=2.11.16,<3",
   "vuer==0.0.32rc7",
 ]
 image = [
@@ -27,12 +28,18 @@ all = [
   "aiohttp_cors>=0.7",
   "aiortc>=1.8",
   "av>=11",
+  "params-proto>=2.11.16,<3",
   "vuer==0.0.32rc7",
   "opencv-python>=4.9",
 ]
 
 [project.scripts]
+teleop-check-avp-output = "teleoperation.cli.check_avp_output:main"
+teleop-export-avp-csv = "teleoperation.cli.export_avp_csv:main"
 teleop-publish-avp-pose = "teleoperation.cli.publish_avp_pose:main"
+teleop-record-avp-data = "teleoperation.cli.record_avp_data:main"
+teleop-replay-avp-recording = "teleoperation.cli.replay_avp_recording:main"
+teleop-sim-avp-output = "teleoperation.cli.simulate_avp_output:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

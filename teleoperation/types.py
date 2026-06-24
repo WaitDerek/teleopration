@@ -44,8 +44,24 @@ class MotionOptions:
 
 @dataclass(frozen=True)
 class GripperCommand:
+    """Normalized gripper command.
+
+    position is a closed fraction: 0.0 is fully open, 1.0 is fully closed.
+    max_effort is normalized to the selected gripper backend.
+    """
+
     position: float
-    max_effort: float = 0.05
+    max_effort: float = 0.5
+
+    def __post_init__(self) -> None:
+        position = float(self.position)
+        max_effort = float(self.max_effort)
+        if not np.isfinite(position):
+            raise ValueError("position must be finite")
+        if not np.isfinite(max_effort):
+            raise ValueError("max_effort must be finite")
+        object.__setattr__(self, "position", min(max(position, 0.0), 1.0))
+        object.__setattr__(self, "max_effort", min(max(max_effort, 0.0), 1.0))
 
 
 class RobotDriver(Protocol):
