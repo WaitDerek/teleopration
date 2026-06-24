@@ -203,9 +203,9 @@ class UR10eRtdeDriver:
         if self._rtde_control is not None:
             self._rtde_control.servoStop()
 
-    def send_relative_pose(self, position_delta: np.ndarray, orientation_delta_wxyz: np.ndarray) -> None:
+    def send_relative_pose(self, position_delta: np.ndarray, orientation_delta_wxyz: np.ndarray) -> bool:
         if not self._enabled:
-            return
+            return False
         if self._rtde_control is None or self._initial_tcp_pose is None:
             raise RuntimeError("Driver is not connected")
 
@@ -227,7 +227,7 @@ class UR10eRtdeDriver:
             float(target_rotvec[2]),
         ]
         if self.check_safety_limits and not self._is_target_within_safety_limits(target):
-            return
+            return False
         self._rtde_control.servoL(
             target,
             self.servo.speed,
@@ -236,6 +236,7 @@ class UR10eRtdeDriver:
             self.servo.lookahead_time,
             self.servo.gain,
         )
+        return True
 
     def send_gripper(self, closed_fraction: float) -> None:
         if not self.gripper.enabled or self._gripper is None:
