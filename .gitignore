@@ -12,6 +12,11 @@ docs/
 third_party/
 add_on/
 __pycache__/
+*.egg-info/
+cert.pem
+key.pem
+certs/
+recordings/
 
 *.STL
 *.obj
