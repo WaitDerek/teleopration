@@ -62,10 +62,22 @@ def parse_args() -> argparse.Namespace:
         help="Scale AVP translation deltas before publishing.",
     )
     parser.add_argument(
+        "--orientation-scale",
+        type=float,
+        default=1.0,
+        help="Scale AVP relative rotation angle before publishing. Use 0 to lock orientation.",
+    )
+    parser.add_argument(
         "--max-position-norm",
         type=float,
         default=None,
         help="Drop pose deltas whose scaled translation norm exceeds this many meters.",
+    )
+    parser.add_argument(
+        "--max-angular-norm",
+        type=float,
+        default=None,
+        help="Drop pose deltas whose scaled relative rotation exceeds this many radians.",
     )
     return parser.parse_args()
 
@@ -78,8 +90,12 @@ def main() -> None:
         raise ValueError("--calibration-delay-samples must be non-negative")
     if args.position_scale <= 0:
         raise ValueError("--position-scale must be positive")
+    if args.orientation_scale < 0:
+        raise ValueError("--orientation-scale must be non-negative")
     if args.max_position_norm is not None and args.max_position_norm <= 0:
         raise ValueError("--max-position-norm must be positive")
+    if args.max_angular_norm is not None and args.max_angular_norm <= 0:
+        raise ValueError("--max-angular-norm must be positive")
 
     rclpy, _, _ = _require_ros2()
     rclpy.init()
@@ -106,6 +122,8 @@ def main() -> None:
         gripper_effort=args.gripper_effort,
         position_scale=args.position_scale,
         max_position_norm=args.max_position_norm,
+        orientation_scale=args.orientation_scale,
+        max_angular_norm=args.max_angular_norm,
         calibration_delay_samples=args.calibration_delay_samples,
     )
     period = 1.0 / args.rate

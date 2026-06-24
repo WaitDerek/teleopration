@@ -6,7 +6,12 @@ from typing import Optional
 
 import numpy as np
 
-from teleoperation.preprocessing.transforms import matrix_to_pose, relative_avp_hand_pose
+from teleoperation.preprocessing.transforms import (
+    matrix_to_pose,
+    quat_angle_rad_wxyz,
+    relative_avp_hand_pose,
+    scale_quat_angle_wxyz,
+)
 from teleoperation.types import GripperCommand, Pose, StreamState
 
 
@@ -18,6 +23,8 @@ class TeleopSession:
     gripper_effort: float = 0.5
     position_scale: float = 1.0
     max_position_norm: Optional[float] = None
+    orientation_scale: float = 1.0
+    max_angular_norm: Optional[float] = None
     calibration_delay_samples: int = 0
     _initial_right_hand: Optional[np.ndarray] = None
     _valid_hand_samples: int = 0
@@ -39,13 +46,18 @@ class TeleopSession:
             self._initial_right_hand = right_hand.copy()
         target_matrix = relative_avp_hand_pose(self._initial_right_hand, right_hand)
         pose = matrix_to_pose(target_matrix, timestamp_sec=time.time())
-        if self.position_scale != 1.0:
+        orientation = pose.orientation_wxyz
+        if self.orientation_scale != 1.0:
+            orientation = scale_quat_angle_wxyz(orientation, self.orientation_scale)
+        if self.position_scale != 1.0 or self.orientation_scale != 1.0:
             pose = Pose(
                 position=pose.position * self.position_scale,
-                orientation_wxyz=pose.orientation_wxyz,
+                orientation_wxyz=orientation,
                 timestamp_sec=pose.timestamp_sec,
             )
         if self.max_position_norm is not None and np.linalg.norm(pose.position) > self.max_position_norm:
+            return None
+        if self.max_angular_norm is not None and quat_angle_rad_wxyz(pose.orientation_wxyz) > self.max_angular_norm:
             return None
         return pose
 

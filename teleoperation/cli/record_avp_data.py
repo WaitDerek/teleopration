@@ -53,10 +53,22 @@ def parse_args() -> argparse.Namespace:
         help="Scale AVP translation deltas before saving replay pose data.",
     )
     parser.add_argument(
+        "--orientation-scale",
+        type=float,
+        default=1.0,
+        help="Scale AVP relative rotation angle before saving replay pose data. Use 0 to lock orientation.",
+    )
+    parser.add_argument(
         "--max-position-norm",
         type=float,
         default=0.10,
         help="Drop scaled pose deltas above this many meters. Use <=0 to disable.",
+    )
+    parser.add_argument(
+        "--max-angular-norm",
+        type=float,
+        default=0.0,
+        help="Drop scaled rotation deltas above this many radians. Use <=0 to disable.",
     )
     parser.add_argument("--print-every", type=float, default=1.0, help="Status print interval. Use 0 to disable.")
     return parser.parse_args()
@@ -83,8 +95,11 @@ def main() -> None:
         raise ValueError("--calibration-delay-samples must be non-negative")
     if args.position_scale <= 0:
         raise ValueError("--position-scale must be positive")
+    if args.orientation_scale < 0:
+        raise ValueError("--orientation-scale must be non-negative")
 
     max_position_norm = None if args.max_position_norm <= 0 else args.max_position_norm
+    max_angular_norm = None if args.max_angular_norm <= 0 else args.max_angular_norm
     output_path = Path(args.output) if args.output else _default_output_path()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -105,6 +120,8 @@ def main() -> None:
         stale_after_sec=args.stale_after,
         position_scale=args.position_scale,
         max_position_norm=max_position_norm,
+        orientation_scale=args.orientation_scale,
+        max_angular_norm=max_angular_norm,
         calibration_delay_samples=args.calibration_delay_samples,
     )
 
@@ -193,14 +210,16 @@ def main() -> None:
         "duration_sec": args.duration,
         "rate_hz": args.rate,
         "position_scale": args.position_scale,
+        "orientation_scale": args.orientation_scale,
         "max_position_norm": max_position_norm,
+        "max_angular_norm": max_angular_norm,
         "calibration_delay_samples": args.calibration_delay_samples,
         "stale_after_sec": args.stale_after,
         "public_host": public_host,
         "port": args.port,
         "columns": {
             "pose_position": "scaled relative translation delta in current teleoperation frame, meters",
-            "pose_orientation_wxyz": "relative orientation delta quaternion, wxyz",
+            "pose_orientation_wxyz": "scaled relative orientation delta quaternion, wxyz",
             "right_hand_matrix": "raw latest right hand 4x4 matrix from AVP/Vuer",
             "head_matrix": "raw latest camera/head 4x4 matrix from AVP/Vuer when valid, otherwise NaN",
             "gripper_position": "normalized closure, 0 open and 1 closed",

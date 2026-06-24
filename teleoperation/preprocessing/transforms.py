@@ -79,6 +79,38 @@ def rotation_matrix_to_quat_wxyz(rotation: np.ndarray) -> np.ndarray:
     return quat / np.linalg.norm(quat)
 
 
+def normalize_quat_wxyz(quat: np.ndarray) -> np.ndarray:
+    q = np.asarray(quat, dtype=float)
+    if q.shape != (4,):
+        raise ValueError(f"quaternion must have shape (4,), got {q.shape}")
+    norm = np.linalg.norm(q)
+    if norm <= 0:
+        raise ValueError("quaternion must be non-zero")
+    return q / norm
+
+
+def quat_angle_rad_wxyz(quat: np.ndarray) -> float:
+    q = normalize_quat_wxyz(quat)
+    return float(2.0 * np.arccos(np.clip(abs(q[0]), -1.0, 1.0)))
+
+
+def scale_quat_angle_wxyz(quat: np.ndarray, scale: float) -> np.ndarray:
+    if scale < 0:
+        raise ValueError("scale must be non-negative")
+    q = normalize_quat_wxyz(quat)
+    if q[0] < 0:
+        q = -q
+    vector_norm = np.linalg.norm(q[1:])
+    if scale == 0 or vector_norm < 1e-12:
+        return np.array([1.0, 0.0, 0.0, 0.0], dtype=float)
+    angle = 2.0 * np.arctan2(vector_norm, q[0])
+    axis = q[1:] / vector_norm
+    scaled_half_angle = angle * scale / 2.0
+    return normalize_quat_wxyz(
+        np.concatenate(([np.cos(scaled_half_angle)], axis * np.sin(scaled_half_angle)))
+    )
+
+
 def matrix_to_pose(matrix: np.ndarray, timestamp_sec: float = 0.0) -> Pose:
     mat = np.asarray(matrix, dtype=float)
     if not is_valid_transform(mat):
