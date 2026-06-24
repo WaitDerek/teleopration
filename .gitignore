@@ -17,6 +17,7 @@ cert.pem
 key.pem
 certs/
 recordings/
+robots/ros2_robotiq_gripper/
 
 *.STL
 *.obj
