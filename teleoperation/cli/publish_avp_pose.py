@@ -8,11 +8,13 @@ from pathlib import Path
 import numpy as np
 
 from teleoperation.avp import OpenTeleVision
-from teleoperation.cli.network import guess_lan_ip
+from teleoperation.cli.config import config_int, config_value, local_client_url
 from teleoperation.cli.url_display import show_open_url
 from teleoperation.ros2.pose_publisher import _require_ros2, make_pose_publisher_node
 from teleoperation.session import TeleopSession
 from teleoperation.types import StreamState
+
+DEFAULT_FRAME_CALIBRATION_FILE = "recordings/avp_forward_xyz_calibration.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,15 +33,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cert", default="./cert.pem", help="TLS certificate for Vuer.")
     parser.add_argument("--key", default="./key.pem", help="TLS key for Vuer.")
     parser.add_argument("--ngrok", action="store_true", help="Run Vuer without local TLS cert/key.")
-    parser.add_argument("--public-host", default=None, help="LAN IP or hostname opened from Vision Pro.")
-    parser.add_argument("--port", type=int, default=8012, help="Vuer HTTPS/websocket port.")
+    parser.add_argument(
+        "--public-host",
+        default=config_value("PUBLIC_HOST"),
+        help="LAN IP or hostname opened from Vision Pro. Defaults to config/teleop.env PUBLIC_HOST.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=config_int("PORT", default=8012),
+        help="Vuer HTTPS/websocket port.",
+    )
     parser.add_argument(
         "--client-url",
         default=None,
         help="Vuer web client URL. Use https://vuer.ai to load the official client while connecting to local WSS.",
     )
     parser.add_argument("--debug-avp", action="store_true", help="Print Vuer HTTP/websocket and AVP event diagnostics.")
-    parser.add_argument("--show-hands", action="store_true", help="Show Vuer hand overlays on Vision Pro.")
+    parser.add_argument("--hide-hands", action="store_true", help="Hide Vuer hand overlays on Vision Pro.")
     parser.add_argument(
         "--hide-images",
         action="store_true",
@@ -48,7 +59,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--image-opacity",
         type=float,
-        default=0.05,
+        default=1.0,
         help="Opacity for the image heartbeat/background. Low values reduce the dark overlay.",
     )
     parser.add_argument("--rate", type=float, default=50.0, help="Publish loop rate in Hz.")
@@ -62,13 +73,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--position-scale",
         type=float,
-        default=0.1,
+        default=0.08,
         help="Scale AVP translation deltas before publishing.",
     )
     parser.add_argument(
         "--orientation-scale",
         type=float,
-        default=0.25,
+        default=0.0,
         help="Scale AVP relative rotation angle before publishing. Use 0 to lock orientation.",
     )
     parser.add_argument(
@@ -108,8 +119,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--frame-calibration-file",
-        default=None,
+        default=config_value("FRAME_CALIBRATION_FILE", default=DEFAULT_FRAME_CALIBRATION_FILE),
         help="JSON file containing a 3x3 rotation_matrix from calibrate_avp_frame.",
+    )
+    parser.add_argument(
+        "--no-frame-calibration",
+        action="store_true",
+        help="Do not load the default frame calibration file.",
     )
     return parser.parse_args()
 
@@ -129,8 +145,15 @@ def main() -> None:
     if args.max_angular_norm is not None and args.max_angular_norm <= 0:
         raise ValueError("--max-angular-norm must be positive")
     frame_rotation_matrix = None
+    if args.no_frame_calibration:
+        args.frame_calibration_file = None
     if args.frame_calibration_file:
         calibration_path = Path(args.frame_calibration_file)
+        if not calibration_path.exists():
+            raise FileNotFoundError(
+                f"frame calibration file not found: {calibration_path}. "
+                "Run teleoperation.cli.calibrate_avp_frame first or pass --no-frame-calibration."
+            )
         calibration = json.loads(calibration_path.read_text())
         rotation_value = calibration.get("rotation_matrix", calibration)
         frame_rotation_matrix = np.asarray(rotation_value, dtype=float)
@@ -142,7 +165,12 @@ def main() -> None:
     gripper_topic = None if args.no_gripper else args.gripper_topic
     node_cls = make_pose_publisher_node(topic_name=args.topic, frame_id=args.frame_id, gripper_topic_name=gripper_topic)
     node = node_cls()
-    public_host = None if args.ngrok else (args.public_host or guess_lan_ip())
+    public_host = None if args.ngrok else args.public_host
+    if not args.ngrok and not public_host:
+        raise ValueError("PUBLIC_HOST is required. Set it in config/teleop.env or pass --public-host.")
+    client_url = args.client_url
+    if client_url is None:
+        client_url = local_client_url(public_host, args.port)
     source = OpenTeleVision(
         cert_file=args.cert,
         key_file=args.key,
@@ -150,10 +178,10 @@ def main() -> None:
         public_host=public_host,
         port=args.port,
         debug=args.debug_avp,
-        show_hands=args.show_hands,
+        show_hands=not args.hide_hands,
         show_images=not args.hide_images,
         image_opacity=args.image_opacity,
-        client_url=args.client_url,
+        client_url=client_url,
     )
     session = TeleopSession(
         stale_after_sec=args.stale_after,

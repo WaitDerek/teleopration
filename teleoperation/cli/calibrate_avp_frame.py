@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import threading
 import time
 from pathlib import Path
 
 import numpy as np
 
 from teleoperation.avp import OpenTeleVision
-from teleoperation.cli.network import guess_lan_ip
+from teleoperation.cli.config import config_int, config_value, local_client_url
 from teleoperation.cli.url_display import show_open_url
 from teleoperation.preprocessing.transforms import relative_avp_hand_pose
 from teleoperation.types import StreamState
@@ -20,23 +21,39 @@ AXES = [
     ("z", np.array([0.0, 0.0, 1.0], dtype=float)),
 ]
 
+DEFAULT_FRAME_CALIBRATION_FILE = "recordings/avp_forward_xyz_calibration.json"
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Calibrate AVP movement axes to UR base axes.")
     parser.add_argument("--cert", default="./cert.pem", help="TLS certificate for Vuer.")
     parser.add_argument("--key", default="./key.pem", help="TLS key for Vuer.")
-    parser.add_argument("--public-host", default=None, help="LAN IP or hostname opened from Vision Pro.")
-    parser.add_argument("--port", type=int, default=8012, help="Vuer HTTPS/websocket port.")
+    parser.add_argument(
+        "--public-host",
+        default=config_value("PUBLIC_HOST"),
+        help="LAN IP or hostname opened from Vision Pro. Defaults to config/teleop.env PUBLIC_HOST.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=config_int("PORT", default=8012),
+        help="Vuer HTTPS/websocket port.",
+    )
     parser.add_argument(
         "--client-url",
         default=None,
         help="Vuer web client URL. Use https://192.168.x.x:8012 for local client.",
     )
     parser.add_argument("--debug-avp", action="store_true", help="Print Vuer diagnostics.")
-    parser.add_argument("--show-hands", action="store_true", help="Show Vuer hand overlays on Vision Pro.")
+    parser.add_argument("--hide-hands", action="store_true", help="Hide Vuer hand overlays on Vision Pro.")
     parser.add_argument("--image-opacity", type=float, default=0.0, help="Image heartbeat opacity.")
     parser.add_argument("--sample-rate", type=float, default=30.0, help="Hand sampling rate in Hz.")
     parser.add_argument("--capture-sec", type=float, default=3.0, help="Seconds to capture each axis movement.")
+    parser.add_argument(
+        "--enter-to-stop",
+        action="store_true",
+        help="Press Enter once to start each axis capture, then press Enter again to stop it.",
+    )
     parser.add_argument("--stale-after", type=float, default=0.5, help="AVP stream stale timeout in seconds.")
     parser.add_argument(
         "--align-wrist-to-base",
@@ -45,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output",
-        default="recordings/avp_frame_calibration.json",
+        default=config_value("FRAME_CALIBRATION_FILE", default=DEFAULT_FRAME_CALIBRATION_FILE),
         help="Output calibration JSON path.",
     )
     return parser.parse_args()
@@ -63,14 +80,30 @@ def wait_for_hand(source: OpenTeleVision, stale_after_sec: float) -> np.ndarray:
 def capture_axis(source: OpenTeleVision, args: argparse.Namespace, axis_name: str) -> np.ndarray:
     input(f"\nHold your right hand at the start point for UR base +{axis_name.upper()}, then press Enter.")
     start = wait_for_hand(source, args.stale_after)
-    print(f"Move only along UR base +{axis_name.upper()} for {args.capture_sec:.1f}s, starting now.")
+    if args.enter_to_stop:
+        print(f"Move only along UR base +{axis_name.upper()}, then press Enter again to stop capture.")
+    else:
+        print(f"Move only along UR base +{axis_name.upper()} for {args.capture_sec:.1f}s, starting now.")
 
     period = 1.0 / args.sample_rate
-    deadline = time.monotonic() + args.capture_sec
     end = start
-    while time.monotonic() < deadline:
-        end = wait_for_hand(source, args.stale_after)
-        time.sleep(period)
+    if args.enter_to_stop:
+        stop_event = threading.Event()
+
+        def wait_for_stop() -> None:
+            input()
+            stop_event.set()
+
+        thread = threading.Thread(target=wait_for_stop, daemon=True)
+        thread.start()
+        while not stop_event.is_set():
+            end = wait_for_hand(source, args.stale_after)
+            time.sleep(period)
+    else:
+        deadline = time.monotonic() + args.capture_sec
+        while time.monotonic() < deadline:
+            end = wait_for_hand(source, args.stale_after)
+            time.sleep(period)
 
     transform = relative_avp_hand_pose(
         start,
@@ -100,19 +133,22 @@ def main() -> None:
     args = parse_args()
     if args.sample_rate <= 0:
         raise ValueError("--sample-rate must be positive")
-    if args.capture_sec <= 0:
+    if not args.enter_to_stop and args.capture_sec <= 0:
         raise ValueError("--capture-sec must be positive")
 
-    public_host = args.public_host or guess_lan_ip()
+    public_host = args.public_host
+    if not public_host:
+        raise ValueError("PUBLIC_HOST is required. Set it in config/teleop.env or pass --public-host.")
+    client_url = args.client_url or local_client_url(public_host, args.port)
     source = OpenTeleVision(
         cert_file=args.cert,
         key_file=args.key,
         public_host=public_host,
         port=args.port,
         debug=args.debug_avp,
-        show_hands=args.show_hands,
+        show_hands=not args.hide_hands,
         image_opacity=args.image_opacity,
-        client_url=args.client_url,
+        client_url=client_url,
     )
 
     measured = []

@@ -5,6 +5,14 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
+CONFIG_FILE="${CONFIG_FILE:-${REPO_ROOT}/config/teleop.env}"
+if [[ -f "${CONFIG_FILE}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${CONFIG_FILE}"
+  set +a
+fi
+
 ROBOT_IP="${ROBOT_IP:-192.168.56.2}"
 PUBLIC_HOST="${PUBLIC_HOST:-}"
 PORT="${PORT:-8012}"
