@@ -1,0 +1,11 @@
+# Core package with AVP/Vuer and image-streaming extras.
+-e .[avp,image]
+
+# Optional UR10e RTDE backend package from this repository.
+-e ./robots/ur10e_rtde
+
+# UR RTDE Python bindings. Provides rtde_control and rtde_receive.
+ur-rtde
+
+# Needed when importing ROS2 Jazzy Python packages from a mamba environment.
+PyYAML>=6.0
