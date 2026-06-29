@@ -122,17 +122,72 @@ def matrix_to_pose(matrix: np.ndarray, timestamp_sec: float = 0.0) -> Pose:
     )
 
 
-def relative_avp_hand_pose(initial_hand_matrix: np.ndarray, current_hand_matrix: np.ndarray) -> np.ndarray:
+def rotation_matrix_from_euler_deg(roll_deg: float = 0.0, pitch_deg: float = 0.0, yaw_deg: float = 0.0) -> np.ndarray:
+    roll, pitch, yaw = np.deg2rad([roll_deg, pitch_deg, yaw_deg])
+    cr, sr = np.cos(roll), np.sin(roll)
+    cp, sp = np.cos(pitch), np.sin(pitch)
+    cy, sy = np.cos(yaw), np.sin(yaw)
+    rx = np.array(
+        [
+            [1, 0, 0],
+            [0, cr, -sr],
+            [0, sr, cr],
+        ],
+        dtype=float,
+    )
+    ry = np.array(
+        [
+            [cp, 0, sp],
+            [0, 1, 0],
+            [-sp, 0, cp],
+        ],
+        dtype=float,
+    )
+    rz = np.array(
+        [
+            [cy, -sy, 0],
+            [sy, cy, 0],
+            [0, 0, 1],
+        ],
+        dtype=float,
+    )
+    return rz @ ry @ rx
+
+
+def apply_frame_rotation(transform: np.ndarray, rotation: np.ndarray) -> np.ndarray:
+    rot = np.asarray(rotation, dtype=float)
+    if rot.shape != (3, 3):
+        raise ValueError(f"rotation must have shape (3, 3), got {rot.shape}")
+    frame = np.eye(4)
+    frame[:3, :3] = rot
+    return frame @ transform @ fast_mat_inv(frame)
+
+
+def relative_avp_hand_pose(
+    initial_hand_matrix: np.ndarray,
+    current_hand_matrix: np.ndarray,
+    *,
+    align_wrist_to_base: bool = False,
+    frame_rotation: np.ndarray | None = None,
+) -> np.ndarray:
     if not is_valid_transform(initial_hand_matrix):
         raise ValueError("initial_hand_matrix is invalid")
     if not is_valid_transform(current_hand_matrix):
         raise ValueError("current_hand_matrix is invalid")
 
     t_vframe0_vframet = fast_mat_inv(initial_hand_matrix) @ current_hand_matrix
+    if align_wrist_to_base:
+        target = t_vframe0_vframet
+        if frame_rotation is not None:
+            target = apply_frame_rotation(target, frame_rotation)
+        return target
+
     t_arm0_armt_trans = T_BASE_VFRAME_TRANS @ t_vframe0_vframet @ fast_mat_inv(T_BASE_VFRAME_TRANS)
     t_arm0_armt_rot = T_BASE_VFRAME_ROT @ t_vframe0_vframet @ fast_mat_inv(T_BASE_VFRAME_ROT)
 
     target = np.eye(4)
     target[:3, :3] = t_arm0_armt_rot[:3, :3]
     target[:3, 3] = t_arm0_armt_trans[:3, 3]
+    if frame_rotation is not None:
+        target = apply_frame_rotation(target, frame_rotation)
     return target

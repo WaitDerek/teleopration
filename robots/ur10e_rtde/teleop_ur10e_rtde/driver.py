@@ -135,7 +135,7 @@ class UR10eRtdeDriver:
         self._rtde_control = None
         self._rtde_receive = None
         self._gripper: Optional[Robotiq2F85SocketGripper] = None
-        self._initial_tcp_pose: Optional[np.ndarray] = None
+        self._current_target_pose: Optional[np.ndarray] = None
         self._enabled = False
 
     def connect(self) -> None:
@@ -150,9 +150,7 @@ class UR10eRtdeDriver:
         try:
             self._rtde_receive = rtde_receive.RTDEReceiveInterface(self.robot_ip)
             self._rtde_control = rtde_control.RTDEControlInterface(self.robot_ip)
-            self._initial_tcp_pose = np.asarray(self._rtde_receive.getActualTCPPose(), dtype=float)
-            if self._initial_tcp_pose.shape != (6,):
-                raise RuntimeError(f"Unexpected TCP pose shape from RTDE: {self._initial_tcp_pose.shape}")
+            self._sync_target_to_actual()
             if self.gripper.enabled:
                 gripper_host = self.gripper.host or self.robot_ip
                 self._gripper = Robotiq2F85SocketGripper(
@@ -187,6 +185,7 @@ class UR10eRtdeDriver:
         self._rtde_control = None
         self._rtde_receive = None
         self._gripper = None
+        self._current_target_pose = None
         self._enabled = False
 
     def enable(self) -> None:
@@ -198,25 +197,27 @@ class UR10eRtdeDriver:
         self._enabled = False
         if self._rtde_control is not None:
             self._rtde_control.servoStop()
+        self._sync_target_to_actual()
 
     def stop_servo(self) -> None:
         if self._rtde_control is not None:
             self._rtde_control.servoStop()
+        self._sync_target_to_actual()
 
     def send_relative_pose(self, position_delta: np.ndarray, orientation_delta_wxyz: np.ndarray) -> bool:
         if not self._enabled:
             return False
-        if self._rtde_control is None or self._initial_tcp_pose is None:
+        if self._rtde_control is None or self._current_target_pose is None:
             raise RuntimeError("Driver is not connected")
 
         delta_pos = np.asarray(position_delta, dtype=float)
         if delta_pos.shape != (3,):
             raise ValueError(f"position_delta must have shape (3,), got {delta_pos.shape}")
 
-        initial_pos = self._initial_tcp_pose[:3]
-        initial_quat = rotvec_to_quat_wxyz(self._initial_tcp_pose[3:])
-        target_pos = initial_pos + delta_pos
-        target_quat = quat_multiply_wxyz(orientation_delta_wxyz, initial_quat)
+        current_pos = self._current_target_pose[:3]
+        current_quat = rotvec_to_quat_wxyz(self._current_target_pose[3:])
+        target_pos = current_pos + delta_pos
+        target_quat = quat_multiply_wxyz(orientation_delta_wxyz, current_quat)
         target_rotvec = quat_wxyz_to_rotvec(target_quat)
         target = [
             float(target_pos[0]),
@@ -236,6 +237,7 @@ class UR10eRtdeDriver:
             self.servo.lookahead_time,
             self.servo.gain,
         )
+        self._current_target_pose = np.asarray(target, dtype=float)
         return True
 
     def send_gripper(self, closed_fraction: float) -> None:
@@ -250,3 +252,12 @@ class UR10eRtdeDriver:
         if checker is None:
             return True
         return bool(checker(target))
+
+    def _sync_target_to_actual(self) -> None:
+        if self._rtde_receive is None:
+            self._current_target_pose = None
+            return
+        actual_tcp_pose = np.asarray(self._rtde_receive.getActualTCPPose(), dtype=float)
+        if actual_tcp_pose.shape != (6,):
+            raise RuntimeError(f"Unexpected TCP pose shape from RTDE: {actual_tcp_pose.shape}")
+        self._current_target_pose = actual_tcp_pose

@@ -10,6 +10,7 @@ from teleoperation.preprocessing.transforms import (
     matrix_to_pose,
     quat_angle_rad_wxyz,
     relative_avp_hand_pose,
+    rotation_matrix_from_euler_deg,
     scale_quat_angle_wxyz,
 )
 from teleoperation.types import GripperCommand, Pose, StreamState
@@ -26,25 +27,47 @@ class TeleopSession:
     orientation_scale: float = 1.0
     max_angular_norm: Optional[float] = None
     calibration_delay_samples: int = 0
-    _initial_right_hand: Optional[np.ndarray] = None
+    align_wrist_to_base: bool = False
+    frame_roll_deg: float = 0.0
+    frame_pitch_deg: float = 0.0
+    frame_yaw_deg: float = 0.0
+    frame_rotation_matrix: Optional[np.ndarray] = None
+    _previous_right_hand: Optional[np.ndarray] = None
     _valid_hand_samples: int = 0
 
     def reset_calibration(self) -> None:
-        self._initial_right_hand = None
+        self._previous_right_hand = None
         self._valid_hand_samples = 0
 
     def target_from_source(self, source) -> Optional[Pose]:
         if source.state(self.stale_after_sec) not in (StreamState.WAITING, StreamState.STREAMING):
+            self._previous_right_hand = None
             return None
         right_hand = source.latest_right_hand_matrix()
         if right_hand is None:
             return None
-        if self._initial_right_hand is None:
+        if self._previous_right_hand is None:
             self._valid_hand_samples += 1
             if self._valid_hand_samples <= self.calibration_delay_samples:
                 return None
-            self._initial_right_hand = right_hand.copy()
-        target_matrix = relative_avp_hand_pose(self._initial_right_hand, right_hand)
+            self._previous_right_hand = right_hand.copy()
+            return None
+        frame_rotation = self.frame_rotation_matrix
+        if frame_rotation is None and (
+            self.frame_roll_deg != 0.0 or self.frame_pitch_deg != 0.0 or self.frame_yaw_deg != 0.0
+        ):
+            frame_rotation = rotation_matrix_from_euler_deg(
+                roll_deg=self.frame_roll_deg,
+                pitch_deg=self.frame_pitch_deg,
+                yaw_deg=self.frame_yaw_deg,
+            )
+        target_matrix = relative_avp_hand_pose(
+            self._previous_right_hand,
+            right_hand,
+            align_wrist_to_base=self.align_wrist_to_base,
+            frame_rotation=frame_rotation,
+        )
+        self._previous_right_hand = right_hand.copy()
         pose = matrix_to_pose(target_matrix, timestamp_sec=time.time())
         orientation = pose.orientation_wxyz
         if self.orientation_scale != 1.0:

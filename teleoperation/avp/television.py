@@ -92,9 +92,9 @@ class OpenTeleVision:
     def browser_url(self) -> Optional[str]:
         if self.ngrok or not self.public_host:
             return None
-        local_client_url = f"https://{self.public_host}:{self.port}/hands/index.html"
+        default_client_url = "https://vuer.ai"
         return self._url_with_query(
-            self.client_url or local_client_url,
+            self.client_url or default_client_url,
             {
                 "ws": f"wss://{self.public_host}:{self.port}",
                 "grid": "False",
@@ -273,8 +273,7 @@ class OpenTeleVision:
                 port=self.port,
                 cert=self.cert_file,
                 key=self.key_file,
-                domain=self.client_url
-                or (f"https://{self.public_host}:{self.port}" if self.public_host else "https://vuer.ai"),
+                domain=self.client_url or "https://vuer.ai",
                 queries=queries,
                 queue_len=3,
             )
