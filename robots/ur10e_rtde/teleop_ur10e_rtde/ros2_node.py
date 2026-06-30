@@ -17,6 +17,7 @@ class LatestTarget:
     position: Optional[np.ndarray] = None
     orientation_wxyz: Optional[np.ndarray] = None
     pose_time: float = 0.0
+    pose_seq: int = 0
     gripper_position: Optional[float] = None
     gripper_time: float = 0.0
 
@@ -31,12 +32,25 @@ def parse_args() -> argparse.Namespace:
         help="ROS2 std_msgs/Float32 gripper closure topic, 0.0 open and 1.0 closed.",
     )
     parser.add_argument("--speed", type=float, default=0.05, help="RTDE servoL speed.")
+    parser.add_argument("--max-speed", type=float, default=0.05, help="Reject --speed above this many m/s.")
     parser.add_argument("--acceleration", type=float, default=0.5, help="RTDE servoL acceleration.")
+    parser.add_argument(
+        "--max-acceleration",
+        type=float,
+        default=0.5,
+        help="Reject --acceleration above this many m/s^2.",
+    )
     parser.add_argument("--dt", type=float, default=0.02, help="RTDE servo period.")
     parser.add_argument("--lookahead-time", type=float, default=0.15, help="RTDE servoL lookahead time.")
     parser.add_argument("--gain", type=float, default=1000.0, help="RTDE servoL gain.")
     parser.add_argument("--max-position-delta", type=float, default=0.35, help="Safety limit for relative translation norm.")
     parser.add_argument("--max-angular-delta", type=float, default=2.2, help="Safety limit for relative rotation in radians.")
+    parser.add_argument(
+        "--max-tcp-x",
+        type=float,
+        default=-0.5,
+        help="Reject target TCP poses whose base-frame X is greater than this many meters. Default -0.5 means x <= -500 mm.",
+    )
     parser.add_argument(
         "--max-target-step",
         type=float,
@@ -87,8 +101,18 @@ def main() -> None:
     args = parse_args()
     if args.speed <= 0:
         raise ValueError("--speed must be positive")
+    if args.max_speed <= 0:
+        raise ValueError("--max-speed must be positive")
+    if args.speed > args.max_speed:
+        raise ValueError(f"--speed {args.speed:.3f} exceeds --max-speed {args.max_speed:.3f}")
     if args.acceleration <= 0:
         raise ValueError("--acceleration must be positive")
+    if args.max_acceleration <= 0:
+        raise ValueError("--max-acceleration must be positive")
+    if args.acceleration > args.max_acceleration:
+        raise ValueError(
+            f"--acceleration {args.acceleration:.3f} exceeds --max-acceleration {args.max_acceleration:.3f}"
+        )
     if args.dt <= 0:
         raise ValueError("--dt must be positive")
     if args.max_position_delta <= 0:
@@ -137,6 +161,7 @@ def main() -> None:
                 target.position = position
                 target.orientation_wxyz = orientation
                 target.pose_time = time.monotonic()
+                target.pose_seq += 1
 
         def _on_gripper(self, msg) -> None:
             gripper_position = float(np.clip(msg.data, 0.0, 1.0))
@@ -164,6 +189,7 @@ def main() -> None:
         servo,
         gripper=gripper,
         check_safety_limits=not args.skip_robot_safety_check,
+        max_tcp_x_m=args.max_tcp_x,
     )
     node = None
     rclpy_started = False
@@ -171,6 +197,7 @@ def main() -> None:
     last_gripper_position: Optional[float] = None
     last_gripper_send_time = 0.0
     last_protective_warning_time = 0.0
+    last_pose_seq = 0
 
     def limit_increment(position: np.ndarray, orientation: np.ndarray) -> tuple[np.ndarray, np.ndarray, list[str]]:
         limited_position = position.copy()
@@ -220,10 +247,13 @@ def main() -> None:
                 position = None if target.position is None else target.position.copy()
                 orientation = None if target.orientation_wxyz is None else target.orientation_wxyz.copy()
                 pose_time = target.pose_time
+                pose_seq = target.pose_seq
                 gripper_position = target.gripper_position
             now = time.monotonic()
-            if position is not None and orientation is not None and now - pose_time <= args.stale_after:
+            has_new_pose = pose_seq != last_pose_seq
+            if has_new_pose and position is not None and orientation is not None and now - pose_time <= args.stale_after:
                 limited_position, limited_orientation, reasons = limit_increment(position, orientation)
+                last_pose_seq = pose_seq
                 if driver.send_relative_pose(limited_position, limited_orientation):
                     servo_stopped = False
                     if reasons and node is not None and now - last_protective_warning_time >= 0.5:
@@ -235,7 +265,7 @@ def main() -> None:
                     if node is not None and now - last_protective_warning_time >= 0.5:
                         node.get_logger().warn("Protective stop: robot safety check rejected target")
                         last_protective_warning_time = now
-            elif not servo_stopped:
+            elif position is not None and now - pose_time > args.stale_after and not servo_stopped:
                 driver.stop_servo()
                 servo_stopped = True
 

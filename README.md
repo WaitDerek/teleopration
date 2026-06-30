@@ -23,6 +23,7 @@ PUBLIC_HOST=192.168.41.27
 ROBOT_IP=192.168.56.2
 CAMERA_INDEX=4
 FRAME_CALIBRATION_FILE=recordings/avp_forward_xyz_calibration.json
+OUTPUT_AXIS_SIGN=-1,-1,1
 PORT=8012
 ```
 
@@ -31,6 +32,8 @@ PORT=8012
 ```text
 https://<PUBLIC_HOST>:<PORT>
 ```
+
+`OUTPUT_AXIS_SIGN=-1,-1,1` applies a 180 degree rotation around Z to the calibrated output before sending it to UR. X/Y are flipped together so translation and wrist rotation stay in a right-handed frame.
 
 ## Readiness check
 
@@ -124,12 +127,6 @@ Use the camera index reported by the readiness check. In the current setup, inde
 python -m teleoperation.cli.stream_usb_camera --camera-index 4 --wait-for-shm --backend-v4l2
 ```
 
-If the image is mirrored incorrectly:
-
-```bash
-python -m teleoperation.cli.stream_usb_camera --camera-index 4 --wait-for-shm --backend-v4l2 --no-mirror
-```
-
 ## Start UR10e backend
 
 ```bash
@@ -137,6 +134,8 @@ teleop-ur10e-rtde --robot-ip 192.168.56.2 --topic Target_Pose --enable-gripper
 ```
 
 The backend uses incremental target deltas and limits each position step to `0.03 m` by default.
+It also rejects target TCP poses whose UR base-frame X is greater than `-0.500 m` by default.
+The default commanded tool speed is `0.02 m/s`, guarded by a maximum allowed speed of `0.05 m/s`.
 
 ## Typical startup order
 

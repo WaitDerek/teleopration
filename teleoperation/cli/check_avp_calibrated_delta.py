@@ -8,9 +8,9 @@ from pathlib import Path
 import numpy as np
 
 from teleoperation.avp import OpenTeleVision
-from teleoperation.cli.config import config_int, config_value, local_client_url
+from teleoperation.cli.config import config_float_tuple, config_int, config_value, local_client_url
 from teleoperation.cli.url_display import show_open_url
-from teleoperation.preprocessing.transforms import relative_avp_hand_pose
+from teleoperation.preprocessing.transforms import apply_frame_rotation, relative_avp_hand_pose
 from teleoperation.types import StreamState
 
 DEFAULT_FRAME_CALIBRATION_FILE = "recordings/avp_forward_xyz_calibration.json"
@@ -59,6 +59,11 @@ def parse_args() -> argparse.Namespace:
         help="Scale calibrated translation deltas the same way as publish_avp_pose.",
     )
     parser.add_argument(
+        "--output-axis-sign",
+        default=",".join(str(value) for value in config_float_tuple("OUTPUT_AXIS_SIGN", default=(-1.0, 1.0, 1.0))),
+        help="Comma-separated signs applied to calibrated output XYZ before scaling. Default from config/teleop.env.",
+    )
+    parser.add_argument(
         "--frame-calibration-file",
         default=config_value("FRAME_CALIBRATION_FILE", default=DEFAULT_FRAME_CALIBRATION_FILE),
         help="JSON file containing a 3x3 rotation_matrix from calibrate_avp_frame.",
@@ -95,6 +100,11 @@ def main() -> None:
         raise ValueError("--zero-samples must be non-negative")
     if args.position_scale <= 0:
         raise ValueError("--position-scale must be positive")
+    output_axis_sign = np.asarray([float(part.strip()) for part in args.output_axis_sign.split(",")], dtype=float)
+    if output_axis_sign.shape != (3,):
+        raise ValueError("--output-axis-sign must contain exactly 3 comma-separated numbers")
+    if np.linalg.det(np.diag(output_axis_sign)) <= 0:
+        raise ValueError("--output-axis-sign must preserve handedness, for example -1,-1,1")
 
     frame_rotation, calibration_align_wrist = load_calibration(args.frame_calibration_file)
     align_wrist_to_base = args.align_wrist_to_base or calibration_align_wrist
@@ -149,10 +159,14 @@ def main() -> None:
                 frame_rotation=frame_rotation,
             )
             raw_delta = transform[:3, 3]
-            scaled_delta = raw_delta * args.position_scale
+            signed_transform = apply_frame_rotation(transform, np.diag(output_axis_sign))
+            signed_delta = signed_transform[:3, 3]
+            scaled_delta = signed_delta * args.position_scale
             print(
                 "raw_delta_m="
                 f"x={raw_delta[0]:+.4f} y={raw_delta[1]:+.4f} z={raw_delta[2]:+.4f} "
+                "signed_delta_m="
+                f"x={signed_delta[0]:+.4f} y={signed_delta[1]:+.4f} z={signed_delta[2]:+.4f} "
                 "scaled_delta_m="
                 f"x={scaled_delta[0]:+.4f} y={scaled_delta[1]:+.4f} z={scaled_delta[2]:+.4f}",
                 flush=True,

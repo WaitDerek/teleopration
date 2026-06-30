@@ -8,8 +8,9 @@ from pathlib import Path
 import numpy as np
 
 from teleoperation.avp import OpenTeleVision
-from teleoperation.cli.config import config_int, config_value, local_client_url
+from teleoperation.cli.config import config_float_tuple, config_int, config_value, local_client_url
 from teleoperation.cli.url_display import show_open_url
+from teleoperation.preprocessing.transforms import quat_angle_rad_wxyz
 from teleoperation.ros2.pose_publisher import _require_ros2, make_pose_publisher_node
 from teleoperation.session import TeleopSession
 from teleoperation.types import StreamState
@@ -50,6 +51,14 @@ def parse_args() -> argparse.Namespace:
         help="Vuer web client URL. Use https://vuer.ai to load the official client while connecting to local WSS.",
     )
     parser.add_argument("--debug-avp", action="store_true", help="Print Vuer HTTP/websocket and AVP event diagnostics.")
+    parser.add_argument("--debug-pose", action="store_true", help="Print final pose deltas published to ROS2.")
+    parser.add_argument("--debug-pose-every", type=float, default=0.5, help="Minimum seconds between pose debug prints.")
+    parser.add_argument(
+        "--debug-pose-limit",
+        type=float,
+        default=0.03,
+        help="Warn in pose debug output when translation norm exceeds this limit in meters.",
+    )
     parser.add_argument("--hide-hands", action="store_true", help="Hide Vuer hand overlays on Vision Pro.")
     parser.add_argument(
         "--hide-images",
@@ -75,6 +84,11 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.08,
         help="Scale AVP translation deltas before publishing.",
+    )
+    parser.add_argument(
+        "--output-axis-sign",
+        default=",".join(str(value) for value in config_float_tuple("OUTPUT_AXIS_SIGN", default=(-1.0, 1.0, 1.0))),
+        help="Comma-separated signs applied to calibrated output XYZ before scaling. Default from config/teleop.env.",
     )
     parser.add_argument(
         "--orientation-scale",
@@ -134,10 +148,19 @@ def main() -> None:
     args = parse_args()
     if args.rate <= 0:
         raise ValueError("--rate must be positive")
+    if args.debug_pose_every < 0:
+        raise ValueError("--debug-pose-every must be non-negative")
+    if args.debug_pose_limit <= 0:
+        raise ValueError("--debug-pose-limit must be positive")
     if args.calibration_delay_samples < 0:
         raise ValueError("--calibration-delay-samples must be non-negative")
     if args.position_scale <= 0:
         raise ValueError("--position-scale must be positive")
+    output_axis_sign = np.asarray([float(part.strip()) for part in args.output_axis_sign.split(",")], dtype=float)
+    if output_axis_sign.shape != (3,):
+        raise ValueError("--output-axis-sign must contain exactly 3 comma-separated numbers")
+    if np.linalg.det(np.diag(output_axis_sign)) <= 0:
+        raise ValueError("--output-axis-sign must preserve handedness, for example -1,-1,1")
     if args.orientation_scale < 0:
         raise ValueError("--orientation-scale must be non-negative")
     if args.max_position_norm is not None and args.max_position_norm <= 0:
@@ -198,8 +221,10 @@ def main() -> None:
         frame_pitch_deg=args.frame_pitch_deg,
         frame_yaw_deg=args.frame_yaw_deg,
         frame_rotation_matrix=frame_rotation_matrix,
+        output_axis_sign=output_axis_sign,
     )
     period = 1.0 / args.rate
+    last_pose_debug_time = 0.0
 
     source.start()
     show_open_url(source.stable_browser_url(), label="Vision Pro URL")
@@ -214,6 +239,20 @@ def main() -> None:
             state = source.state(args.stale_after)
             pose = session.target_from_source(source)
             if pose is not None and state == StreamState.STREAMING:
+                if args.debug_pose:
+                    now = time.monotonic()
+                    if args.debug_pose_every == 0 or now - last_pose_debug_time >= args.debug_pose_every:
+                        position_norm = float(np.linalg.norm(pose.position))
+                        angular_norm = quat_angle_rad_wxyz(pose.orientation_wxyz)
+                        limit_text = "LIMIT" if position_norm > args.debug_pose_limit else "ok"
+                        print(
+                            "published_delta "
+                            f"x={pose.position[0]:+.4f} y={pose.position[1]:+.4f} z={pose.position[2]:+.4f} "
+                            f"norm={position_norm:.4f}m limit={args.debug_pose_limit:.4f}m {limit_text} "
+                            f"angle={angular_norm:.4f}rad",
+                            flush=True,
+                        )
+                        last_pose_debug_time = now
                 node.publish_target(pose)
             gripper_command = session.gripper_from_source(source)
             if gripper_command is not None:

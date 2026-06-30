@@ -127,11 +127,13 @@ class UR10eRtdeDriver:
         servo: RtdeServoConfig = RtdeServoConfig(),
         gripper: RobotiqGripperConfig = RobotiqGripperConfig(),
         check_safety_limits: bool = True,
+        max_tcp_x_m: Optional[float] = -0.5,
     ) -> None:
         self.robot_ip = robot_ip
         self.servo = servo
         self.gripper = gripper
         self.check_safety_limits = check_safety_limits
+        self.max_tcp_x_m = max_tcp_x_m
         self._rtde_control = None
         self._rtde_receive = None
         self._gripper: Optional[Robotiq2F85SocketGripper] = None
@@ -246,6 +248,8 @@ class UR10eRtdeDriver:
         self._gripper.move(closed_fraction, speed=self.gripper.speed, force=self.gripper.force)
 
     def _is_target_within_safety_limits(self, target: list[float]) -> bool:
+        if self.max_tcp_x_m is not None and target[0] > self.max_tcp_x_m:
+            return False
         if self._rtde_control is None:
             raise RuntimeError("Driver is not connected")
         checker = getattr(self._rtde_control, "isPoseWithinSafetyLimits", None)

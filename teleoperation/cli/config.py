@@ -34,6 +34,18 @@ def config_int(name: str, *, config: Optional[dict[str, str]] = None, default: i
     return default if value is None or value == "" else int(value)
 
 
+def config_float_tuple(
+    name: str,
+    *,
+    config: Optional[dict[str, str]] = None,
+    default: tuple[float, ...],
+) -> tuple[float, ...]:
+    value = config_value(name, config=config, default=None)
+    if value is None or value == "":
+        return default
+    return tuple(float(part.strip()) for part in value.split(","))
+
+
 def local_client_url(public_host: Optional[str], port: int) -> Optional[str]:
     if not public_host:
         return None

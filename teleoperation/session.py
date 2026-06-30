@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
 
 from teleoperation.preprocessing.transforms import (
+    apply_frame_rotation,
     matrix_to_pose,
     quat_angle_rad_wxyz,
     relative_avp_hand_pose,
@@ -32,6 +33,7 @@ class TeleopSession:
     frame_pitch_deg: float = 0.0
     frame_yaw_deg: float = 0.0
     frame_rotation_matrix: Optional[np.ndarray] = None
+    output_axis_sign: np.ndarray = field(default_factory=lambda: np.ones(3, dtype=float))
     _previous_right_hand: Optional[np.ndarray] = None
     _valid_hand_samples: int = 0
 
@@ -67,6 +69,12 @@ class TeleopSession:
             align_wrist_to_base=self.align_wrist_to_base,
             frame_rotation=frame_rotation,
         )
+        output_axis_sign = np.asarray(self.output_axis_sign, dtype=float)
+        if not np.allclose(output_axis_sign, np.ones(3, dtype=float)):
+            output_rotation = np.diag(output_axis_sign)
+            if np.linalg.det(output_rotation) <= 0:
+                raise ValueError("output_axis_sign must preserve handedness when orientation is enabled")
+            target_matrix = apply_frame_rotation(target_matrix, output_rotation)
         self._previous_right_hand = right_hand.copy()
         pose = matrix_to_pose(target_matrix, timestamp_sec=time.time())
         orientation = pose.orientation_wxyz
